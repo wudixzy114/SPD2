@@ -1,17 +1,49 @@
-import { _decorator, Component, director, game, Vec2 } from "cc";
+import {
+  _decorator,
+  Component,
+  director,
+  game,
+  Vec2,
+  find,
+  instantiate,
+  Prefab,
+  Camera,
+  Vec3,
+} from "cc";
 import { EventManager } from "./EventManager";
 import { GameEvent } from "../common/GameEvent";
 import { DungeonGenerator } from "../logic/DungeonGenerator";
 import { Level } from "../model/Level";
 import { TileType } from "../model/Tile";
+import { DungeonView } from "../view/DungeonView";
+import { PlayerView } from "../view/PlayerView";
 const { ccclass, property } = _decorator;
 
 @ccclass("GameManager")
 export class GameManager extends Component {
-  private currentLevel: Level;
+  @property(Prefab)
+  private playerPrefab: Prefab = null;
 
-  protected onLoad(): void {
+  private currentLevel: Level;
+  private dungeonView: DungeonView;
+  private playerView: PlayerView;
+  private mainCamera: Camera;
+
+  async onLoad() {
     director.addPersistRootNode(this.node);
+
+    const dungeonNode = find("Dungeon");
+    if (
+      !dungeonNode ||
+      !(this.dungeonView = dungeonNode.getComponent(DungeonView))
+    ) {
+      console.error(
+        "Dungeon node or DungeonView component not found in the scene."
+      );
+      return;
+    }
+
+    this.mainCamera = find("Camera").getComponent(Camera);
 
     EventManager.instance.on(
       GameEvent.INPUT_MOVE_INTENT,
@@ -38,13 +70,57 @@ export class GameManager extends Component {
     );
   }
 
-  protected start(): void {
+  protected start() {
     console.log("Game architecture initialized. Waiting for input...");
-    this.generateAndPrintDungeon();
+    this.createNewLevel();
+    this.spawnPlayer();
     EventManager.instance.emit(GameEvent.GAME_START);
   }
 
+  private createNewLevel(): void {
+    const generator = new DungeonGenerator();
+    this.currentLevel = generator.generate(80, 50, 15, 6, 10);
+    this.dungeonView.initialize(this.currentLevel);
+  }
+
+  private spawnPlayer(): void {
+    const playerNode = instantiate(this.playerPrefab);
+    this.playerView = playerNode.getComponent(PlayerView);
+    this.playerView.initialize();
+
+    const dungeonNode = find("Dungeon");
+    dungeonNode.addChild(playerNode);
+
+    const startWorldPos = this.dungeonView.tileToWorld(
+      this.currentLevel.startPosition
+    );
+    this.playerView.updatePosition(startWorldPos);
+    this.centerCameraOnPlayer();
+  }
+
+  private centerCameraOnPlayer(): void {
+    if (this.playerView && this.mainCamera) {
+      const playerPos = this.playerView.node.worldPosition;
+      this.mainCamera.node.setWorldPosition(
+        new Vec3(playerPos.x, playerPos.y, this.mainCamera.node.worldPosition.z)
+      );
+    }
+  }
+
   private onPlayerMoveIntent(direction: Vec2) {
+    // --- THIS IS TEMPORARY LOGIC FOR VISUAL TESTING ---
+    const newPos = this.currentLevel.startPosition.clone().add(direction);
+
+    // Simple boundary and wall check
+    const targetTile = this.currentLevel.getTile(newPos.x, newPos.y);
+    if (targetTile && targetTile.type !== TileType.Wall) {
+      this.currentLevel.startPosition = newPos;
+      const newWorldPos = this.dungeonView.tileToWorld(
+        this.currentLevel.startPosition
+      );
+      this.playerView.updatePosition(newWorldPos);
+      this.centerCameraOnPlayer();
+    }
     console.log(
       `[GameManager] Received move intent: (${direction.x}, ${direction.y})`
     );
